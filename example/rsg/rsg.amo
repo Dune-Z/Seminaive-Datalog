@@ -1,0 +1,18 @@
+@input
+up(sym, sym)
+
+@input
+down(sym, sym)
+
+@input
+flat(sym, sym)
+
+rsg(X, Y) :-
+    flat(X, Y)
+rsg(X, Y) :-
+    up(X, Z),
+    rsg(W, Z),
+    down(W, Y)
+
+@output
+rsg(X, Y)

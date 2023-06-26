@@ -1,0 +1,42 @@
+% edb should be declared leading by input annotation
+% `sym` indicates that the input is a symbol
+% e.g edge(a, b) is a fact of this edb
+@input
+edge(sym, sym)
+
+% the following declaration is an idb
+% idb is determined by clauses of lawful rules
+path(X, Y) :- edge(X, Y)
+path(X, Z) :- edge(X, Y), path(Y, Z)
+
+% @input
+% weighted_edge(sym, sym, int)
+
+% we can also declare idb in nonlinear fashion
+% path_nonlinear(X, Z) :-
+%    edge(X, Z)
+% path_nonlinear(X, Z) :-
+%     path_nonlinear(X, Y),
+%     path_nonlinear(Y, Z)
+
+
+% We can query the existence of certain facts with output annotation
+% output(file) indicates that the result will be written to `file.csv`
+@output
+path(X, Y)
+
+% output indicates that the result will be written to stdout
+% query containing constants is also supported
+% @output
+% path_nonlinear(a, Y)
+
+node(X) :-
+    edge(X, X)
+
+not_path(X, Y) :-
+    node(X),
+    node(Y),
+    Not path(X, Y)
+
+% invalid_not_path(X, Y) :- Not path(X, Y)
+% path(X, Y) :- Not invalid_not_path(X, Y)
