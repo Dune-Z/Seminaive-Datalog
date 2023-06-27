@@ -7,7 +7,7 @@ pub struct Context {
     pub stratum: Stratum,
     pub edbs: HashMap<String, Rule>,
     pub idbs: HashMap<String, Vec<Rule>>,
-    pub queries: HashMap<String, Rule>,
+    pub queries: HashMap<String, Vec<Rule>>,
 }
 
 impl Context {
@@ -22,7 +22,9 @@ impl Context {
                     edbs.insert(name, rule.clone());
                 }
                 IO::Write(_) => {
-                    queries.insert(name, rule.clone());
+                    let rules = queries.entry(name)
+                        .or_insert(Vec::new());
+                    rules.push(rule.clone());
                 }
                 IO::Silent => {
                     let rules = idbs.entry(name)
@@ -128,10 +130,5 @@ impl Context {
             });
         });
         queue
-    }
-
-    pub fn queries(&self) -> Vec<String> {
-        // return all queries' name
-        self.queries.keys().map(|name| name.clone()).collect()
     }
 }

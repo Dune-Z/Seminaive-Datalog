@@ -100,69 +100,71 @@ impl Runtime {
     }
 
     pub fn write_queries(&self) -> Result<(), Box<dyn Error>> {
-        let queries = self.context.queries();
-        queries.iter().for_each(|query| {
-            let sql = format!("SELECT name FROM sqlite_master WHERE type='table' AND name='{}';", query);
-            let mut stmt = self.database.prepare(&sql).unwrap();
-            let mut rows = stmt.query(params![]).unwrap();
-            let rows_exist = rows.next().unwrap();
-            if rows_exist.is_none() {
-                panic!("Query {} is not present in database", query);
-            }
-            let rule = self.context.queries.get(query)
-                .expect("Query should be present in context");
-            let mut sql = format!("SELECT * FROM {}", query);
-            let mut where_sql = Vec::new();
-            let var_dict = VarDict::new(rule);
-            // push constant terms to where clause
-            rule.head.terms.iter().enumerate().for_each(|(term_index, term)| {
-                if let Term::Constant(constant) = term {
-                    let column = format!("column_{}", term_index);
-                    where_sql.push(format!("{} = {}", column, constant));
+        let queries = &self.context.queries;
+        queries.iter().for_each(|(query, rules)| {
+            for rule in rules {
+                let sql = format!("SELECT name FROM sqlite_master WHERE type='table' AND name='{}';", query);
+                let mut stmt = self.database.prepare(&sql).unwrap();
+                let mut rows = stmt.query(params![]).unwrap();
+                let rows_exist = rows.next().unwrap();
+                if rows_exist.is_none() {
+                    panic!("Query {} is not present in database", query);
                 }
-            });
-            // push inner where_sql stmt
-            var_dict.head_dict.iter().for_each(|(_, indexes)| {
-                indexes.iter().skip(1).for_each(|index| {
-                    let column = format!("column_{}", index);
-                    where_sql.push(format!("column_0 = {}", column));
+                // let rule = self.context.queries.get(query)
+                //     .expect("Query should be present in context");
+                let mut sql = format!("SELECT * FROM {}", query);
+                let mut where_sql = Vec::new();
+                let var_dict = VarDict::new(rule);
+                // push constant terms to where clause
+                rule.head.terms.iter().enumerate().for_each(|(term_index, term)| {
+                    if let Term::Constant(constant) = term {
+                        let column = format!("column_{}", term_index);
+                        where_sql.push(format!("{} = {}", column, constant));
+                    }
                 });
-            });
-            if !where_sql.is_empty() {
-                sql.push_str(" WHERE ");
-                sql.push_str(where_sql.join(" AND ").as_str());
-            }
-            sql.push_str(";");
-            if self.verbose {
-                println!("{}: {}", "EXECUTE".green(), sql);
-            }
-            let mut stmt = self.database.prepare(sql.as_str()).unwrap();
-            let rows = stmt.query_map([], |row| {
-                let mut values = Vec::new();
-                for i in 0..rule.head.terms.len() {
-                    let value = row.get::<_, String>(i).unwrap();
-                    values.push(value);
+                // push inner where_sql stmt
+                var_dict.head_dict.iter().for_each(|(_, indexes)| {
+                    indexes.iter().skip(1).for_each(|index| {
+                        let column = format!("column_{}", index);
+                        where_sql.push(format!("column_0 = {}", column));
+                    });
+                });
+                if !where_sql.is_empty() {
+                    sql.push_str(" WHERE ");
+                    sql.push_str(where_sql.join(" AND ").as_str());
                 }
-                Ok(values)
-            }).unwrap();
-            let entities = rows.collect::<Result<Vec<Vec<String>>, _>>().unwrap();
-            // if length of entities is less than 20, print all
-            // else print the first 10 and last 10
-            println!("{}: {}", "QUERY".green(), rule.head);
-            if entities.len() <= 20 {
-                entities.iter().for_each(|entity| {
-                    println!("{}", entity.join(", "));
-                });
-            } else {
-                entities.iter().take(10).for_each(|entity| {
-                    println!("{}", entity.join(", "));
-                });
-                println!("...");
-                entities.iter().rev().take(10).for_each(|entity| {
-                    println!("{}", entity.join(", "));
-                });
+                sql.push_str(";");
+                if self.verbose {
+                    println!("{}: {}", "EXECUTE".green(), sql);
+                }
+                let mut stmt = self.database.prepare(sql.as_str()).unwrap();
+                let rows = stmt.query_map([], |row| {
+                    let mut values = Vec::new();
+                    for i in 0..rule.head.terms.len() {
+                        let value = row.get::<_, String>(i).unwrap();
+                        values.push(value);
+                    }
+                    Ok(values)
+                }).unwrap();
+                let entities = rows.collect::<Result<Vec<Vec<String>>, _>>().unwrap();
+                // if length of entities is less than 20, print all
+                // else print the first 10 and last 10
+                println!("{}: {}", "QUERY".green(), rule.head);
+                if entities.len() <= 20 {
+                    entities.iter().for_each(|entity| {
+                        println!("{}", entity.join(", "));
+                    });
+                } else {
+                    entities.iter().take(10).for_each(|entity| {
+                        println!("{}", entity.join(", "));
+                    });
+                    println!("...");
+                    entities.iter().rev().take(10).for_each(|entity| {
+                        println!("{}", entity.join(", "));
+                    });
+                }
+                println!("{}: {}", "COUNT".green(), entities.len());
             }
-            println!("{}: {}", "COUNT".green(), entities.len());
         });
         Ok(())
     }
@@ -192,7 +194,15 @@ impl Runtime {
                     sql.push_str(", ");
                 }
             }
-            sql.push_str(");");
+            // unique constraint on all columns
+            sql.push_str(", UNIQUE(");
+            for i in 0..arity {
+                sql.push_str(format!("column_{}", i).as_str());
+                if i < arity - 1 {
+                    sql.push_str(", ");
+                }
+            }
+            sql.push_str("));");
             if self.verbose {
                 println!("{}: {}", "EXECUTE".green(), sql);
             }
@@ -211,7 +221,7 @@ impl Runtime {
 
     fn init_base(&self, rule: &Rule) {
         let indent = " ".repeat(9);
-        let mut sql = format!("INSERT INTO {}\n", rule.head.to_string());
+        let mut sql = format!("INSERT OR IGNORE INTO {}\n", rule.head.to_string());
         let mut select_sql = Vec::new();
         let mut join_sql = HashMap::new();
         let mut where_sql = Vec::new();
@@ -302,7 +312,7 @@ impl Runtime {
         }
         if !where_sql.is_empty() {
             let mut where_sql = where_sql.join(" AND ");
-            where_sql = format!("{}WHERE {}", indent, where_sql);
+            where_sql = format!("{}WHERE {}\n", indent, where_sql);
             sql.push_str(&where_sql);
         }
         if self.verbose {
@@ -370,7 +380,7 @@ impl Runtime {
 
     fn iteration(&self, rule: &Rule) {
         let indent = " ".repeat(9);
-        let mut sql = format!("INSERT INTO temp_{}\n", rule.head.to_string());
+        let mut sql = format!("INSERT OR IGNORE INTO temp_{}\n", rule.head.to_string());
         let mut select_sql = Vec::new();
         let mut join_sql: HashMap<String, Vec<String>> = HashMap::new();
         let mut where_sql: Vec<String> = Vec::new();
@@ -492,7 +502,7 @@ impl Runtime {
         }
         self.database.execute(&clear_delta, params![]).unwrap();
         // use left join
-        let mut update_sql = format!("INSERT INTO delta_{}\n{}SELECT temp_{}.* FROM temp_{}\n{}",
+        let mut update_sql = format!("INSERT OR IGNORE INTO delta_{}\n{}SELECT temp_{}.* FROM temp_{}\n{}",
             rule.head.predicate,
             indent,
             rule.head.predicate,
@@ -520,7 +530,7 @@ impl Runtime {
         self.database.execute(&update_sql, params![]).unwrap();
 
         // update original := original + delta
-        let update_sql = format!("INSERT INTO {}\n{}SELECT * FROM delta_{}",
+        let update_sql = format!("INSERT OR IGNORE INTO {}\n{}SELECT * FROM delta_{};",
             rule.head.predicate,
             indent,
             rule.head.predicate,
